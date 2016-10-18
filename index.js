@@ -7,16 +7,14 @@ var hashFile = require('./lib/hash-file');
 var filesToArchives = require('./lib/files-to-archives');
 var archiveTo7z = require('./lib/archive-to-7z');
 
-var spawn = require('child_process').spawn;
-function run(args, stdin, onDone) {
+var exec = require('child_process').exec;
+function run(cmd, args, stdin, onDone) {
   if (typeof stdin === 'function') {
     onDone = stdin;
     stdin = null;
   }
-  console.log('Running: 7z ' + args.join(' '));
-  var child = spawn('7z', args, {
-    stdio: ['pipe', process.stdout, process.stderr],
-  });
+  console.log('Running: ' + [cmd].concat(args).join(' '));
+  var child = exec([cmd].concat(args).join(' '));
   child.on('error', onDone);
   child.on('exit', function(code) {
     if (code !== 0) {
@@ -74,20 +72,20 @@ module.exports = function(dirs, opts) {
         '-mhe=on',
         '-si',
         '-bd',
-        path.join(opts.output, 'meta.7z')
+        path.join(opts.output, 'meta.json.7z')
       ];
-      run(args, JSON.stringify(archives, null, 2), onDone);
+      run('7z', args, JSON.stringify(archives, null, 2), onDone);
     }))
     .pipe(pi.thru.obj(function(archive, encoding, onDone) {
       // generate the file name based on md5(concat(file hashes))
-      var filename = md5(archive.files.map(function(file) { return file.hash; }).sort().join('')) + '.7z';
+      var filename = md5(archive.files.map(function(file) { return file.hash; }).sort().join('')) + '.tar.7z';
       opts.filename = path.join(opts.output, filename.substr(0, 2), filename);
       if (fs.existsSync(opts.filename + '.001')) {
         console.log('Path exists, skipping ' + opts.filename + '.001');
         onDone();
       } else {
         var args = archiveTo7z(archive, opts);
-        run(args, onDone);
+        run('tar', args, onDone);
       }
     }))
     .pipe(pi.devnull());
