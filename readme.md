@@ -12,6 +12,14 @@ With cloud storage becoming cheaper and cheaper, owning and operating hard drive
 - produces separate metadata files so that I don't need to download any of the archive files just to peek at what they contain
 - batches up really small files (to avoid having a ton of tiny files) and breaks up really large files (to avoid deal with failed uploads as frequently)
 
+# TODO
+
+- store mapping from archive (with name & size) -> files
+- improve status display
+- use a chain of execs instead of a spawn to avoid issues with file name escaping
+- when given a target path, use paths relative to the root of the path in the tarfile
+- compress the meta.json file
+
 # Installation
 
 ```
