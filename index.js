@@ -6,6 +6,8 @@ var dirStream = require('./lib/dir-stream');
 var hashFile = require('./lib/hash-file');
 var filesToArchives = require('./lib/files-to-archives');
 var archiveTo7z = require('./lib/archive-to-7z');
+var parallel = require('miniq');
+
 
 var exec = require('child_process').exec;
 function run(cmd, args, stdin, onDone) {
@@ -13,8 +15,10 @@ function run(cmd, args, stdin, onDone) {
     onDone = stdin;
     stdin = null;
   }
-  console.log('Running: ' + [cmd].concat(args).join(' '));
-  var child = exec([cmd].concat(args).join(' '));
+  console.log('Running: ' + [cmd].concat(args).join(' ').length);
+  var child = exec([cmd].concat(args).join(' '), {maxBuffer: 1024 * 5000});
+  child.stderr.pipe(process.stderr);
+  child.stdout.pipe(process.stdout);
   child.on('error', onDone);
   child.on('exit', function(code) {
     if (code !== 0) {
@@ -42,17 +46,28 @@ module.exports = function(dirs, opts) {
       return path.resolve(opts.cwd, dir);
     }))
     .pipe(dirStream()) // resolve to files { path: .., stat: .. }
-    .pipe(pi.parallel(4, function(file, encoding, onDone) {
+    .pipe(pi.reduce(function(files, file) { return files.concat(file); }, []))
+    .pipe(pi.thru.obj(function(files, encoding, onDone) {
       var self = this;
-      // calculate md5 hash
-      hashFile(file.path, function(err, hash) {
-        file.hash = hash;
-        file.hashType = 'md5';
-        self.push(file);
-        onDone(err);
+      var result = [];
+      parallel(4, files.map(function(file) {
+        return function(onDone) {
+          process.stderr.cursorTo(0);
+          process.stderr.write(result.length + '/' + files.length + ' MD5 hashing ' + file.path);
+          process.stderr.clearLine(1);
+          // calculate md5 hash
+          hashFile(file.path, function(err, hash) {
+            file.hash = hash;
+            file.hashType = 'md5';
+            result.push(file);
+            onDone(err);
+          });
+        };
+      }), function() {
+        self.push(result);
+        onDone();      
       });
     }))
-    .pipe(pi.reduce(function(files, file) { return files.concat(file); }, []))
     .pipe(pi.thru.obj(function(files, encoding, onDone) {
       var self = this;
       var archives = filesToArchives(files);
