@@ -1,0 +1,23 @@
+#!/usr/bin/env node
+var eb = require('../index.js');
+var fs = require('fs');
+var CWD = process.cwd();
+var subarg = require('subarg');
+
+var argv = subarg(process.argv.slice(2));
+
+if (argv.v || argv.version) {
+  console.log(require('../package.json').version);
+  process.exit();
+}
+
+if (argv.help || argv.h) {
+  console.log(fs.readFileSync(__dirname + '/usage.txt').toString());
+  process.exit();
+}
+
+eb(argv._, {
+  cwd: CWD,
+  password: argv.password,
+  output: argv.output,
+});
