@@ -14,11 +14,8 @@ With cloud storage becoming cheaper and cheaper, owning and operating hard drive
 
 # TODO
 
-- store mapping from archive (with name & size) -> files
-- improve status display
-- use a chain of execs instead of a spawn to avoid issues with file name escaping
 - when given a target path, use paths relative to the root of the path in the tarfile
-- compress the meta.json file
+- parse the split size so that the target archive sizes are also affected
 
 # Installation
 
@@ -29,7 +26,7 @@ npm install -g 7zeb
 # Usage
 
 ```
-7zeb -p password -o ./output ./foo ./bar
+7zeb -p password -o ./output --root /some/path --split 512m ./foo ./bar
 ```
 
 `7zeb` will iterate over the files in `./foo` and `./bar` and writes output into `./output`.

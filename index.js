@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+var os = require('os');
 var fs = require('fs');
 var path = require('path');
 var pi = require('pipe-iterators');
@@ -7,40 +8,35 @@ var hashFile = require('./lib/hash-file');
 var filesToArchives = require('./lib/files-to-archives');
 var archiveTo7z = require('./lib/archive-to-7z');
 var parallel = require('miniq');
+var mkdirp = require('mkdirp');
+var status = require('./lib/status');
+var spawn = require('child_process').spawn;
 
+function run(cmds, onDone) {
+  var last = cmds.reduce(function(prev, args) {
+    console.error('Running: ' + args.join(' ').substr(0, process.stderr.columns - 1));
+    var child = spawn(args[0], args.slice(1));
 
-var exec = require('child_process').exec;
-function run(cmd, args, stdin, onDone) {
-  if (typeof stdin === 'function') {
-    onDone = stdin;
-    stdin = null;
-  }
-  console.log('Running: ' + [cmd].concat(args).join(' ').length);
-  var child = exec([cmd].concat(args).join(' '), {maxBuffer: 1024 * 5000});
-  child.stderr.pipe(process.stderr);
-  child.stdout.pipe(process.stdout);
-  child.on('error', onDone);
-  child.on('exit', function(code) {
+    if (prev) {
+      prev.stdout.pipe(child.stdin);
+    }
+    child.on('error', onDone);
+
+    return child;
+  }, null);
+
+  last.on('exit', function(code) {
     if (code !== 0) {
-      return onDone(new Error('Running: 7z ' + args.join(' ') + ' - process exited with code ' + code));
+      return onDone(new Error('Process exited with code ' + code));
     }
     onDone();
   });
-
-  if (stdin) {
-    child.stdin.end(stdin);
-  }
-}
-
-var crypto = require('crypto');
-
-function md5(str) {
-  return crypto.createHash('md5').update(str).digest('hex');
 }
 
 module.exports = function(dirs, opts) {
-  console.log(dirs);
+  console.log('Creating an archive from: ' + dirs.join(' '));
 
+  mkdirp.sync(opts.output);
   pi.fromArray(dirs)
     .pipe(pi.map(function(dir) {
       return path.resolve(opts.cwd, dir);
@@ -52,9 +48,7 @@ module.exports = function(dirs, opts) {
       var result = [];
       parallel(4, files.map(function(file) {
         return function(onDone) {
-          process.stderr.cursorTo(0);
-          process.stderr.write(result.length + '/' + files.length + ' MD5 hashing ' + file.path);
-          process.stderr.clearLine(1);
+          status(result.length + '/' + files.length + ' MD5 hashing ' + file.path);
           // calculate md5 hash
           hashFile(file.path, function(err, hash) {
             file.hash = hash;
@@ -64,8 +58,9 @@ module.exports = function(dirs, opts) {
           });
         };
       }), function() {
+        status('Done hashing\n');
         self.push(result);
-        onDone();      
+        onDone();
       });
     }))
     .pipe(pi.thru.obj(function(files, encoding, onDone) {
@@ -73,34 +68,37 @@ module.exports = function(dirs, opts) {
       var archives = filesToArchives(files);
       archives.map(function(archive) { self.push(archive); });
       // write metadata
+      var dirname = Math.random().toString(36).substring(2) + new Date().getTime().toString(36);
+      var filepath = path.join(os.tmpDir(), path.join(dirname, 'meta.json'));
+      mkdirp.sync(path.join(os.tmpDir(), dirname));
+      fs.writeFileSync(filepath, archives.map(function(archive) { return JSON.stringify(archive); }).join('\n'));
       var args = [
+        '7z',
         'a',
         // Archive type = 7z
         '-t7z',
         // Password
         '-p' + opts.password,
-        // Compression level 0 = copy
-        '-mx=0',
+        // Compression level 9
+        '-mx=9',
         // Encrypt archive
         '-mhc=on',
         // Encrypt archive header (hide filenames)
         '-mhe=on',
-        '-si',
         '-bd',
-        path.join(opts.output, 'meta.json.7z')
+        path.join(opts.output, 'meta.json.7z'),
+        filepath,
       ];
-      run('7z', args, JSON.stringify(archives, null, 2), onDone);
+      run([args], onDone);
     }))
     .pipe(pi.thru.obj(function(archive, encoding, onDone) {
-      // generate the file name based on md5(concat(file hashes))
-      var filename = md5(archive.files.map(function(file) { return file.hash; }).sort().join('')) + '.tar.7z';
-      opts.filename = path.join(opts.output, filename.substr(0, 2), filename);
+      opts.filename = path.join(opts.output, archive.filename.substr(0, 2), archive.filename);
       if (fs.existsSync(opts.filename + '.001')) {
-        console.log('Path exists, skipping ' + opts.filename + '.001');
+        console.error('Path exists, skipping ' + opts.filename + '.001');
         onDone();
       } else {
         var args = archiveTo7z(archive, opts);
-        run('tar', args, onDone);
+        run(args, onDone);
       }
     }))
     .pipe(pi.devnull());
